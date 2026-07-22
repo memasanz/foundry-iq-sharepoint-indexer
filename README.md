@@ -99,6 +99,34 @@ credential** trusting the search managed identity, and a scoped **`read` grant**
 > **zero `oauth2PermissionGrants`** (no delegated), `Sites.FullControl.All` is gone, and the app
 > successfully indexes the granted site with ACL trimming intact.
 
+#### Why `Sites.FullControl.All` — and how to avoid it
+
+The app only ever needs `Sites.Selected` at runtime. But granting an app `Sites.Selected` `read`
+on a specific site is itself a **write** to that site's permissions
+(`POST https://graph.microsoft.com/v1.0/sites/{id}/permissions`), and Microsoft Graph requires
+**`Sites.FullControl.All` (Application)** for that single call — `Sites.Selected` cannot grant
+itself, and a plain `az login` token does not carry that scope. There is no lesser Graph
+permission that can write a site grant.
+
+`setup-app-registration.ps1` therefore **bootstraps and immediately reverts**: it adds
+`Sites.FullControl.All` to the app, admin-consents, uses the app's *own* app-only token to write
+the one `read` grant, then **removes `Sites.FullControl.All`** (`Grant-AppSiteAccess`). The app's
+steady-state permission set is only the four `Application` roles above — the elevated permission
+never persists.
+
+**Prefer the app to never hold `Sites.FullControl.All`, even briefly?** Skip the bootstrap and have
+a SharePoint/Graph admin perform the per-site grant manually, once, with a privileged identity:
+
+```powershell
+# PnP PowerShell — admin grants the app 'read' on the site; the app never gets FullControl
+Grant-PnPAzureADAppSitePermission -AppId <appId> -DisplayName spmm-sharepoint-acl `
+    -Site https://<tenant>.sharepoint.com/sites/<site> -Permissions Read
+```
+
+Then delete the `Grant-AppSiteAccess` bootstrap block (and its call at step 6) from
+`setup-app-registration.ps1`. The trade-off is an extra manual admin step per site instead of a
+fully automated, self-reverting grant.
+
 **Azure RBAC role assignments:**
 
 | Assignee | Role | Scope | Why |
