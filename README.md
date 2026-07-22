@@ -255,9 +255,17 @@ end-to-end flow is below.
 ## Deploy (one command)
 
 ```powershell
-./deploy.ps1 -ResourceGroup rg-spmm -Location eastus2 `
+./deploy.ps1 -ResourceGroup rg-spmm -Location eastus `
              -SiteUrls "https://<tenant>.sharepoint.com/sites/<site>"
 ```
+
+> **⚠️ Region matters — use a Vision-capable region (e.g. `eastus`).** The skillset includes the
+> Azure AI Vision multimodal-embeddings skill (`Microsoft.Skills.Vision.VectorizeSkill`), which is
+> **not available in `eastus2`** — a build there fails at skillset creation with
+> *"…which is not supported in this region."* Pass `-Location eastus` (the `deploy.ps1` default is
+> `eastus2`, so set it explicitly). Verify multimodal-embedding availability for your region in the
+> [skill reference](https://learn.microsoft.com/azure/search/cognitive-search-skill-vision-vectorize#supported-regions).
+> If you must deploy to `eastus2`, drop the Vision skill (see *Deploy without the Vision skill* below).
 
 `deploy.ps1` runs, in order:
 
@@ -274,9 +282,9 @@ end-to-end flow is below.
 ## Manual / step-by-step
 
 ```powershell
-# 1. Infra
-az group create -n rg-spmm -l eastus2
-az deployment group create -g rg-spmm -f infra/main.bicep -p infra/main.bicepparam
+# 1. Infra  (use a Vision-capable region — eastus, NOT eastus2)
+az group create -n rg-spmm -l eastus
+az deployment group create -g rg-spmm -f infra/main.bicep -p infra/main.bicepparam -p location=eastus
 
 # 2. App registration + RBAC (fills SHAREPOINT_CONNECTION_STRING into .env)
 ./scripts/setup-app-registration.ps1 `
@@ -296,6 +304,140 @@ python scripts/build_index.py docs       # sample text + image rows
 > Prefer a notebook? **`notebooks/01_setup_index.ipynb`** performs the exact same step 3
 > (datasource → index → skillset → indexer → run → verify) as clean, `.env`-driven REST
 > calls with an explanation of every payload — a readable alternative to `build_index.py`.
+
+## Split deploy: developer vs. admin (separation of duties)
+
+`deploy.ps1` runs infra **and** the privileged app-registration/RBAC/consent step in one shot, so a
+single operator would need to be both **Contributor** on the resource group **and** a
+**Privileged-Role/Application admin + Owner/User Access Administrator**. To keep those duties
+separate, use the built-in `-SkipInfra` / `-SkipAppRegistration` / `-SkipIndex` switches to run the
+flow in three phases — no code changes required.
+
+**Super admin (holds every role) — one command, no phases.** If a single operator is
+**Contributor** on the RG **and** an **App/Privileged-Role admin** **and** **Owner/User Access
+Administrator**, they can do everything in one shot (this is the [Deploy (one command)](#deploy-one-command)
+path — it runs infra → app registration + all RBAC + consent → build):
+
+```powershell
+./deploy.ps1 -ResourceGroup rg-spmm -Location eastus `
+             -SiteUrls "https://<tenant>.sharepoint.com/sites/<site>"
+```
+
+Otherwise, hand the work off in three phases:
+
+| Phase | Who | Rights needed | Actions |
+|---|---|---|---|
+| **1. Infra** | Developer | Contributor on the RG | `az deployment group create` (Bicep: search + Foundry + models) → outputs MI principalId + resource IDs |
+| **2. Admin** | Admin | App/Privileged-Role admin **+** Owner/UAA | App registration, Graph/SharePoint perms, **admin consent**, client secret, federated cred, per-site `read` grant, **all RBAC** (search MI → *Cognitive Services User*; developer → the 2 Search roles) → returns `SHAREPOINT_CONNECTION_STRING` |
+| **3. Build** | Developer | The 2 Search roles the admin granted | `python scripts/build_index.py build` / `status` |
+
+**Phase 1 — Developer (Contributor on the RG): provision infra only.**
+
+```powershell
+./deploy.ps1 -ResourceGroup rg-spmm -Location eastus `
+             -SiteUrls "https://<tenant>.sharepoint.com/sites/<site>" `
+             -SkipAppRegistration -SkipIndex
+```
+
+This deploys the Bicep (search + Foundry + models) and writes `.env` with the resource endpoints —
+but does **no** Entra work, **no** RBAC, and **no** index build. Then collect the values the admin
+needs (from the Bicep outputs) plus your own principal id:
+
+```powershell
+az deployment group show -g rg-spmm -n main --query properties.outputs   # searchIdentityPrincipalId, foundryResourceId, searchServiceResourceId
+az ad signed-in-user show --query id -o tsv                              # your object id -> give to the admin
+```
+
+**Phase 2 — Admin (App/Privileged-Role admin + Owner/UAA): app registration + all grants.**
+
+The admin runs `setup-app-registration.ps1` directly with the Phase 1 outputs. This creates the app,
+Graph/SharePoint permissions, **admin consent**, client secret, federated credential, per-site
+`read` grant, and every RBAC assignment (search MI → *Cognitive Services User* on the Foundry; the
+developer → *Search Service Contributor* + *Search Index Data Contributor* on the search service):
+
+```powershell
+./scripts/setup-app-registration.ps1 `
+    -SearchIdentityPrincipalId <searchIdentityPrincipalId> `
+    -FoundryResourceId <foundryResourceId> `
+    -SearchServiceResourceId <searchServiceResourceId> `
+    -SiteUrls "https://<tenant>.sharepoint.com/sites/<site>" `
+    -DeveloperPrincipalId <developer object id> `
+    -EnvPath ./.env
+```
+
+It prints (and, with `-EnvPath`, appends) `SHAREPOINT_CONNECTION_STRING`. Hand that value back to the
+developer to place in their `.env` (the client secret is shown only once — share it securely).
+
+**Phase 3 — Developer: build the index.**
+
+```powershell
+python scripts/build_index.py build
+python scripts/build_index.py status    # poll until success
+```
+
+> ⚠️ For Phase 3, call `build_index.py` **directly** — do **not** re-run `deploy.ps1` (even with
+> `-SkipInfra -SkipAppRegistration`). `deploy.ps1` rewrites `.env` from the infra outputs on every
+> run and would overwrite the admin-supplied `SHAREPOINT_CONNECTION_STRING`.
+
+## Deploy to an existing search service (reuse existing Search + Foundry)
+
+If the Azure AI Search service and a Foundry (AI Services) account **already exist** — you only
+want to build this index onto them — skip the Bicep step entirely. You just need a system-assigned
+managed identity on the search service, three role assignments, a filled `.env`, and `build_index.py`.
+
+The search service must be in a **Vision-capable region** (e.g. `eastus`), and the Foundry account
+must have the `text-embedding-3-large` and `gpt-4.1-mini` model deployments (any Foundry with them
+works — it does not have to be in the same region or resource group as the search service, because
+billing uses a keyless connection).
+
+```powershell
+# Names of the pre-existing resources
+$search      = "search-7zmdhqwh4d4ve"                # your existing Azure AI Search service
+$searchRg    = "rg-lpa-dev-eastus"
+$foundryId   = az cognitiveservices account show -n <foundry> -g <foundryRg> --query id -o tsv
+
+# 1. Ensure the search service has a system-assigned managed identity
+$searchMi = az search service update -n $search -g $searchRg `
+    --identity-type SystemAssigned --query identity.principalId -o tsv
+
+# 2. Grant that MI keyless access to the Foundry (Content Understanding, embeddings, Vision)
+az role assignment create --assignee-object-id $searchMi --assignee-principal-type ServicePrincipal `
+    --role "Cognitive Services User" --scope $foundryId
+
+# 3. Grant yourself the data-plane roles to create the objects and run ACL-trimmed queries
+$searchId = az search service show -n $search -g $searchRg --query id -o tsv
+$me = az ad signed-in-user show --query id -o tsv
+az role assignment create --assignee-object-id $me --assignee-principal-type User `
+    --role "Search Service Contributor"    --scope $searchId
+az role assignment create --assignee-object-id $me --assignee-principal-type User `
+    --role "Search Index Data Contributor" --scope $searchId
+
+# 4. Fill .env (see .env.example): AZURE_SEARCH_ENDPOINT, AZURE_OPENAI_ENDPOINT,
+#    AZURE_AI_SERVICES_ENDPOINT, model deployment names, and SHAREPOINT_CONNECTION_STRING.
+#    (The SharePoint app registration from scripts/setup-app-registration.ps1 can be reused.)
+
+# 5. Build and run the index
+python scripts/build_index.py build
+python scripts/build_index.py status    # poll until success
+python scripts/build_index.py run       # re-run the indexer any time afterward
+```
+
+Role assignments can take a minute to propagate; if `build` returns 403, wait and retry.
+
+## Deploy without the Vision skill (e.g. into `eastus2`)
+
+The Vision multimodal-embeddings skill is unavailable in some regions (notably `eastus2`). To index
+there, drop the Vision pieces — you keep text chunking, text embeddings, image **extraction** +
+inline **verbalization**, base64 image rendering, and ACL trimming; you lose only text→image vector
+similarity search. Remove from `scripts/build_index.py` (or a copy of it):
+
+- the `imageVector` field, the `image-profile` vector profile, and the `vision-vectorizer` vectorizer
+  (in `build_index`);
+- the `image_embed` (`#Microsoft.Skills.Vision.VectorizeSkill`) skill (in `build_skillset`);
+- the `imageVector` mapping from the image index-projection selector.
+
+Because field removal isn't allowed on an existing index, delete the index first if it already
+exists (`DELETE indexes/<name>`), then re-run `build`.
 
 ## Querying with ACL trimming
 
