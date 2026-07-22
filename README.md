@@ -78,19 +78,26 @@ az rest --method get --url "https://graph.microsoft.com/v1.0/me/memberOf?$select
 `scripts/setup-app-registration.ps1` (invoked by `deploy.ps1`) creates the app registration and
 assigns everything below. Nothing here needs to be assigned by hand.
 
-**On the SharePoint app registration (application permissions):**
+**On the SharePoint app registration — all are `Application` (app-only) permissions; there are
+NO `Delegated` permissions.** The indexer runs headless (app-only client-credentials), so every
+permission below is an application role that requires **tenant admin consent**:
 
-| API | Permission | Why |
-|---|---|---|
-| Microsoft Graph | `Files.Read.All` | Read document content for indexing |
-| Microsoft Graph | `Sites.Selected` | Least-privilege site access (only granted sites) |
-| SharePoint (Office 365) | `Sites.Selected` | Honor native site groups at query time |
-| SharePoint (Office 365) | `User.Read.All` | Resolve user/group ACLs |
-| Microsoft Graph | `Sites.FullControl.All` | **Temporary** — used only to write the per-site grant, then **removed** |
+| API | Permission | Type | Why |
+|---|---|---|---|
+| Microsoft Graph | `Files.Read.All` | Application | Read document content for indexing |
+| Microsoft Graph | `Sites.Selected` | Application | Least-privilege site access (only granted sites) |
+| SharePoint (Office 365) | `Sites.Selected` | Application | Honor native site groups at query time |
+| SharePoint (Office 365) | `User.Read.All` | Application | Resolve user/group ACLs |
+| Microsoft Graph | `Sites.FullControl.All` | Application | **Temporary** — added only to write the per-site `read` grant, then **removed** (least privilege) |
 
 Plus, on the app: **admin consent** for the above, a **client secret** (1-year), a **federated
 credential** trusting the search managed identity, and a scoped **`read` grant** on each
 `-SiteUrls` site (this is what `Sites.Selected` limits access to).
+
+> **Verified end-to-end** (dedicated test app `spmm-sharepoint-acl-test`): after the script runs,
+> the app's consented `appRoleAssignments` are exactly the four `Application` roles above with
+> **zero `oauth2PermissionGrants`** (no delegated), `Sites.FullControl.All` is gone, and the app
+> successfully indexes the granted site with ACL trimming intact.
 
 **Azure RBAC role assignments:**
 
@@ -130,9 +137,18 @@ Bicep outputs (`az deployment group show -g <rg> -n main --query properties.outp
 ### End-user query permissions
 
 At query time, results are ACL-trimmed: a user only sees a document if their Entra `oid` (or a
-group they belong to) is in that document's SharePoint permissions. The querying app forwards the
-user's token in `x-ms-query-source-authorization`. No extra Azure role is required for the end
-user — SharePoint ACLs are enforced by Azure AI Search.
+group they belong to) is in that document's SharePoint permissions. **Two tokens** are involved on
+the query call:
+
+- `Authorization: Bearer <search token>` — authenticates the caller to the search data plane. The
+  **calling identity** (the user directly, or a middle-tier app querying on their behalf) needs the
+  **`Search Index Data Reader`** Azure RBAC role on the search service.
+- `x-ms-query-source-authorization: Bearer <user token>` — the end user's token, used **only** for
+  ACL trimming. The end user needs no Azure RBAC role; their access is governed entirely by
+  SharePoint permissions, which Azure AI Search enforces.
+
+Without the `x-ms-query-source-authorization` header the query returns only documents shared
+broadly in SharePoint (verified: 10 public rows vs 86 with the header).
 
 ## Deploy (one command)
 
