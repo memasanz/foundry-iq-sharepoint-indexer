@@ -29,7 +29,7 @@ query is trimmed to the caller's identity.
 
 ```
 id, parent_id, parent_id_img, kind, content, contentVector(3072), imageVector(1024),
-imagePath, imageData, page, pageTo, sourceFile, metadata_spo_item_id, webUrl,
+  imageData, page, pageTo, sourceFile, metadata_spo_item_id, webUrl,
 metadata_spo_item_path, lastModified, UserIds, GroupIds
 ```
 

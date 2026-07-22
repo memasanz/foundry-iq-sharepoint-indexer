@@ -12,7 +12,7 @@ multimodal index over a SharePoint library while preserving Entra ACL security t
 
 Index schema (matches the multimodal RAG shape):
   id, parent_id, parent_id_img, kind, content, contentVector(3072), imageVector(1024),
-  imagePath, imageData, page, pageTo, sourceFile, metadata_spo_item_id, webUrl,
+  imageData, page, pageTo, sourceFile, metadata_spo_item_id, webUrl,
   metadata_spo_item_path, lastModified, UserIds, GroupIds
 
 Auth: keyless via DefaultAzureCredential (needs Search Service Contributor + Search Index Data
@@ -108,7 +108,6 @@ def build_index():
              "retrievable": False, "dimensions": EMBED_DIMENSIONS, "vectorSearchProfile": "text-profile"},
             {"name": "imageVector", "type": "Collection(Edm.Single)", "searchable": True,
              "retrievable": False, "dimensions": VISION_DIMENSIONS, "vectorSearchProfile": "image-profile"},
-            {"name": "imagePath", "type": "Edm.String", "retrievable": True},
             {"name": "imageData", "type": "Edm.String", "retrievable": True,
              "searchable": False, "filterable": False, "sortable": False, "facetable": False},
             {"name": "page", "type": "Edm.Int32", "filterable": True, "sortable": True,
@@ -234,7 +233,6 @@ def build_skillset():
                         {"name": "content", "source": "/document/text_sections/*/content"},
                         {"name": "contentVector", "source": "/document/text_sections/*/content_vector"},
                         {"name": "kind", "source": "/document/text_sections/*/kind"},
-                        {"name": "imagePath", "source": "/document/text_sections/*/imagePath"},
                         {"name": "page", "source": "/document/text_sections/*/locationMetadata/pageNumberFrom"},
                         {"name": "pageTo", "source": "/document/text_sections/*/locationMetadata/pageNumberTo"},
                     ] + doc_meta,
@@ -307,7 +305,7 @@ def query(text="*", as_user=True):
         headers["x-ms-query-source-authorization"] = _token()
     r = rest("POST", f"indexes/{INDEX}/docs/search", {
         "search": text, "count": True, "top": 1000,
-        "select": "kind,sourceFile,page,pageTo,content,imagePath",
+        "select": "kind,sourceFile,page,pageTo,content",
     }, extra_headers=headers)
     rows = r.get("value", [])
     print("total rows:", r.get("@odata.count"), "(as_user=", as_user, ")")
@@ -317,7 +315,7 @@ def query(text="*", as_user=True):
             print(f"  [text ] {d.get('sourceFile')} p.{d.get('page')}-{d.get('pageTo')} | "
                   f"{(d.get('content') or '')[:70]!r}")
         else:
-            print(f"  [image] {d.get('sourceFile')} p.{d.get('page')} {d.get('imagePath')}")
+            print(f"  [image] {d.get('sourceFile')} p.{d.get('page')}")
 
 
 def main():
