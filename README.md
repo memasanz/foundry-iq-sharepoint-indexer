@@ -99,6 +99,43 @@ credential** trusting the search managed identity, and a scoped **`read` grant**
 > **zero `oauth2PermissionGrants`** (no delegated), `Sites.FullControl.All` is gone, and the app
 > successfully indexes the granted site with ACL trimming intact.
 
+#### Client secret vs. federated credential — what each is for
+
+The script provisions **two** credentials on the app. They serve different jobs:
+
+**Client secret — required (this is the auth path the pipeline actually uses).**
+The SharePoint indexer runs headless (no signed-in user), so it authenticates to SharePoint /
+Microsoft Graph **app-only** using the app's client ID + secret. The secret is passed to the
+indexer inside `SHAREPOINT_CONNECTION_STRING` as `ApplicationSecret=...`:
+
+```
+SharePointOnlineEndpoint=https://<tenant>.sharepoint.com/sites/<site>;ApplicationId=<appId>;ApplicationSecret=<clientSecret>;TenantId=<tenantId>
+```
+
+That app-only token is what lets the indexer read document content **and** read each item's
+Entra user/group object IDs (via `User.Read.All`) into the `UserIds` / `GroupIds` ACL fields that
+drive query-time trimming. Without it the indexer cannot connect. The secret is issued for **1
+year** — rotate it (`az ad app credential reset --id <appId>`) and update the connection string
+before it expires, or indexing stops.
+
+**Federated credential — optional (secretless / native SharePoint site-group path).**
+This is a workload-identity-federation credential that **trusts the search service's managed
+identity**:
+
+| Field | Value |
+|---|---|
+| `issuer` | `https://login.microsoftonline.com/<tenantId>/v2.0` |
+| `subject` | the search service managed identity principal ID |
+| `audience` | `api://AzureADTokenExchange` |
+
+It lets the **search managed identity exchange its own MI token for an app-only token of this app
+with no stored secret** — the basis for the secretless connection option and for resolving
+**native SharePoint site groups** (not just Entra objects) at query time. The shipped connection
+string above uses the client secret, so you do **not** need the federated credential for the Entra
+user/group ACL trimming this repo demonstrates; it is created so the secretless / native-group path
+is available if you choose it. If you never use that path you can safely delete it
+(`az ad app federated-credential delete --id <appObjectId> --federated-credential-id <name>`).
+
 #### Why `Sites.FullControl.All` — and how to avoid it
 
 The app only ever needs `Sites.Selected` at runtime. But granting an app `Sites.Selected` `read`
@@ -177,6 +214,43 @@ the query call:
 
 Without the `x-ms-query-source-authorization` header the query returns only documents shared
 broadly in SharePoint (verified: 10 public rows vs 86 with the header).
+
+## Azure resources deployed
+
+`infra/main.bicep` (via `deploy.ps1`) provisions everything below into a single resource group.
+Names derive from `-BaseName` (default `spmm`) plus a hash of the resource-group ID, so they are
+globally unique. Both services use a **system-assigned managed identity** and **Entra-only
+(keyless) data-plane auth** (`disableLocalAuth: true`).
+
+| Resource | Type / kind | SKU | Purpose |
+|---|---|---|---|
+| `spmm-search-<hash>` | `Microsoft.Search/searchServices` | `basic` (configurable), **semantic ranker = standard** | Hosts the datasource, index, skillset, and indexer; runs ACL-trimmed multimodal queries. Its MI calls Foundry keyless. |
+| `spmm-foundry-<hash>` | `Microsoft.CognitiveServices/accounts`, kind **`AIServices`** | `S0` | One account serving **Azure OpenAI** (embeddings + verbalization chat), **Content Understanding**, and **Azure AI Vision** multimodal embeddings. |
+| `spmm-proj` | `Microsoft.CognitiveServices/accounts/projects` | — | Foundry project under the account (`allowProjectManagement`). |
+| `text-embedding-3-large` | account model deployment | `Standard`, cap 50 | Text embeddings → `contentVector` (3072-dim). |
+| `gpt-4.1-mini` | account model deployment | `GlobalStandard`, cap 50 | Content Understanding **image verbalization** (inline figure descriptions). |
+
+> **Not ARM resources.** The SharePoint **app registration** (Entra) is created by
+> `setup-app-registration.ps1`, and the **datasource / index / skillset / indexer** are Azure AI
+> Search *data-plane* objects created by `build_index.py` — none of these appear in the resource
+> group. The Foundry account also provides Content Understanding and Vision multimodal embeddings
+> with **no extra model deployment**.
+
+**Region:** default `eastus2`. Azure AI Vision multimodal-embedding availability varies by region —
+pick a region that supports it (see prerequisites). Change SKUs/region/models via `-BaseName`,
+`-Location`, `infra/main.bicepparam`, or the `deployments` param in `infra/main.bicep`.
+
+**Deploy just the infrastructure** (no app registration / index):
+
+```powershell
+az group create -n rg-spmm -l eastus2
+az deployment group create -g rg-spmm -f infra/main.bicep -p infra/main.bicepparam
+# resource IDs + endpoints needed by the setup script:
+az deployment group show -g rg-spmm -n main --query properties.outputs
+```
+
+Or run `deploy.ps1 -SkipAppRegistration -SkipIndex` to stop after provisioning. The full
+end-to-end flow is below.
 
 ## Deploy (one command)
 
