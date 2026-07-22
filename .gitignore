@@ -1,0 +1,15 @@
+# Secrets / local config
+.env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Bicep build output
+*.json.bicep
+infra/*.json
+
+# Notebook checkpoints + extracted demo assets
+.ipynb_checkpoints/
+notebooks/_out/
