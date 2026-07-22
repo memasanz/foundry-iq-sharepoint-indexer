@@ -1,10 +1,14 @@
 # Secrets / local config
 .env
+.env.*
+!.env.example
 
 # Python
 .venv/
+venv/
 __pycache__/
 *.pyc
+*.pyo
 
 # Bicep build output
 *.json.bicep
@@ -13,3 +17,14 @@ infra/*.json
 # Notebook checkpoints + extracted demo assets
 .ipynb_checkpoints/
 notebooks/_out/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE / editor
+.vscode/
+.idea/
