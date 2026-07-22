@@ -175,6 +175,10 @@ python scripts/build_index.py status    # poll until success
 python scripts/build_index.py docs       # sample text + image rows
 ```
 
+> Prefer a notebook? **`notebooks/01_setup_index.ipynb`** performs the exact same step 3
+> (datasource → index → skillset → indexer → run → verify) as clean, `.env`-driven REST
+> calls with an explanation of every payload — a readable alternative to `build_index.py`.
+
 ## Querying with ACL trimming
 
 Every query must forward the caller's identity in the **`x-ms-query-source-authorization`** header,
@@ -201,5 +205,6 @@ scripts/
   build_index.py               # datasource / index / skillset / indexer + query
 deploy.ps1                     # orchestrator
 notebooks/
+  01_setup_index.ipynb           # build the 4 search resources via REST (.env-driven)
   demo_retrieval_and_images.ipynb
 ```
