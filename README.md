@@ -270,17 +270,18 @@ end-to-end flow is below.
 > [skill reference](https://learn.microsoft.com/azure/search/cognitive-search-skill-vision-vectorize#supported-regions).
 > If you must deploy to `eastus2`, drop the Vision skill (see *Deploy without the Vision skill* below).
 
-`deploy.ps1` runs, in order:
+`deploy.ps1` is a thin orchestrator that runs the three per-phase scripts in order (see
+*Split deploy* below to run them individually with least privilege):
 
-1. **Bicep** (`infra/main.bicep`) — Azure AI Search (system MI, semantic ranker) + Foundry
-   (AI Services) account, project, and model deployments (`text-embedding-3-large`, `gpt-4.1-mini`).
-2. **App registration** (`scripts/setup-app-registration.ps1`) — creates the SharePoint app,
-   Graph + SharePoint permissions, admin consent, client secret, federated credential, per-site
-   `read` grant, and RBAC (search MI → *Cognitive Services User*; you → search data-plane roles).
-3. Writes **`.env`** from the deployment outputs + app registration.
-4. `pip install -r requirements.txt`.
-5. **Index build** (`scripts/build_index.py build`) — datasource, index, skillset, indexer (auto-runs).
-6. Polls indexer status.
+1. **`scripts/deploy-infra.ps1`** — Bicep (`infra/main.bicep`): Azure AI Search (system MI,
+   semantic ranker) + Foundry (AI Services) account, project, and model deployments
+   (`text-embedding-3-large`, `gpt-4.1-mini`); writes **`.env`** from the deployment outputs.
+2. **`scripts/setup-app-registration.ps1`** — creates the SharePoint app, Graph + SharePoint
+   permissions, admin consent, client secret, federated credential, per-site `read` grant, and RBAC
+   (search MI → *Cognitive Services User*; you → search data-plane roles); appends
+   `SHAREPOINT_CONNECTION_STRING` to `.env`.
+3. **`scripts/build-index.ps1`** — `pip install -r requirements.txt`, then
+   `build_index.py build` (datasource, index, skillset, indexer — auto-runs) and polls status.
 
 ## Manual / step-by-step
 
@@ -331,20 +332,19 @@ Otherwise, hand the work off in three phases:
 | Phase | Who | Rights needed | Actions |
 |---|---|---|---|
 | **1. Infra** | Developer | Contributor on the RG | `az deployment group create` (Bicep: search + Foundry + models) → outputs MI principalId + resource IDs |
-| **2. Admin** | Admin | App/Privileged-Role admin **+** Owner/UAA | App registration, Graph/SharePoint perms, **admin consent**, client secret, federated cred, per-site `read` grant, **all RBAC** (search MI → *Cognitive Services User*; developer → the 2 Search roles) → returns `SHAREPOINT_CONNECTION_STRING` |
-| **3. Build** | Developer | The 2 Search roles the admin granted | `python scripts/build_index.py build` / `status` |
+| **1. Infra** | Developer | Contributor on the RG | **`scripts/deploy-infra.ps1`** → Bicep (search + Foundry + models) + writes `.env`; prints MI principalId + resource IDs |
+| **2. Admin** | Admin | App/Privileged-Role admin **+** Owner/UAA | **`scripts/setup-app-registration.ps1`** → app registration, Graph/SharePoint perms, **admin consent**, client secret, federated cred, per-site `read` grant, **all RBAC** (search MI → *Cognitive Services User*; developer → the 2 Search roles) → appends `SHAREPOINT_CONNECTION_STRING` |
+| **3. Build** | Developer | The 2 Search roles the admin granted | **`scripts/build-index.ps1`** (`build_index.py build` / `status`) |
 
 **Phase 1 — Developer (Contributor on the RG): provision infra only.**
 
 ```powershell
-./deploy.ps1 -ResourceGroup rg-spmm -Location eastus `
-             -SiteUrls "https://<tenant>.sharepoint.com/sites/<site>" `
-             -SkipAppRegistration -SkipIndex
+./scripts/deploy-infra.ps1 -ResourceGroup rg-spmm -Location eastus
 ```
 
 This deploys the Bicep (search + Foundry + models) and writes `.env` with the resource endpoints —
-but does **no** Entra work, **no** RBAC, and **no** index build. Then collect the values the admin
-needs (from the Bicep outputs) plus your own principal id:
+no Entra work, no RBAC, no index build. It prints the values the admin needs for Phase 2; you can
+also read them, plus your own principal id, with:
 
 ```powershell
 az deployment group show -g rg-spmm -n main --query properties.outputs   # searchIdentityPrincipalId, foundryResourceId, searchServiceResourceId
@@ -374,13 +374,15 @@ developer to place in their `.env` (the client secret is shown only once — sha
 **Phase 3 — Developer: build the index.**
 
 ```powershell
-python scripts/build_index.py build
-python scripts/build_index.py status    # poll until success
+./scripts/build-index.ps1
 ```
 
-> ⚠️ For Phase 3, call `build_index.py` **directly** — do **not** re-run `deploy.ps1` (even with
-> `-SkipInfra -SkipAppRegistration`). `deploy.ps1` rewrites `.env` from the infra outputs on every
-> run and would overwrite the admin-supplied `SHAREPOINT_CONNECTION_STRING`.
+This installs the Python deps and runs `build_index.py build` + `status`. It reads `.env` but never
+writes it, so it's safe to re-run without clobbering the admin-supplied `SHAREPOINT_CONNECTION_STRING`.
+
+> ⚠️ For Phase 3 use `scripts/build-index.ps1` (or `python scripts/build_index.py build`) — do **not**
+> re-run `deploy.ps1`/`deploy-infra.ps1`, which rewrite `.env` from the infra outputs and would
+> overwrite the admin-supplied `SHAREPOINT_CONNECTION_STRING`.
 
 ## Deploy to an existing search service (reuse existing Search + Foundry)
 
@@ -464,9 +466,11 @@ infra/
   main.bicep, main.bicepparam
   modules/search.bicep, modules/foundry.bicep
 scripts/
-  setup-app-registration.ps1   # SharePoint app + permissions + RBAC
+  deploy-infra.ps1             # Phase 1: Bicep infra + writes .env
+  setup-app-registration.ps1   # Phase 2: SharePoint app + permissions + RBAC
+  build-index.ps1              # Phase 3: pip install + build_index.py build/status
   build_index.py               # datasource / index / skillset / indexer + query
-deploy.ps1                     # orchestrator
+deploy.ps1                     # orchestrator: runs the three phase scripts in order
 notebooks/
   01_setup_index.ipynb           # build the 4 search resources via REST (.env-driven)
   demo_retrieval_and_images.ipynb
