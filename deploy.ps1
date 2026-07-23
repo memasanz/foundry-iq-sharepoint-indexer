@@ -12,9 +12,10 @@
                                                                     model deployments; writes .env.
       2. scripts/setup-app-registration.ps1 (Phase 2, admin)      -> SharePoint app, permissions,
                                                                     admin consent, secret, site
-                                                                    grants, search-MI RBAC; appends .env.
-      3. scripts/grant-developer-roles.ps1  (Phase 3, admin)      -> grants the developer the two
-                                                                    search data-plane roles.
+                                                                    grants; appends .env.
+      3. scripts/grant-dev-and-managed-identity.ps1 (Phase 3, admin) -> grants the developer the two
+                                                                    search data-plane roles + the
+                                                                    search MI Cognitive Services User.
       4. scripts/build-index.ps1           (Phase 4, developer)  -> pip install + datasource +
                                                                     index + skillset + indexer,
                                                                     then polls to completion.
@@ -73,10 +74,9 @@ $deploy = az deployment group show -g $ResourceGroup -n main --query properties.
 
 # --- 2. App registration + RBAC (Phase 2: admin) ----------------------------
 if (-not $SkipAppRegistration) {
-    Write-Host "`n[2/4] Setting up SharePoint app registration + RBAC..." -ForegroundColor Green
+    Write-Host "`n[2/4] Setting up SharePoint app registration + site grants..." -ForegroundColor Green
     & (Join-Path $repoRoot 'scripts/setup-app-registration.ps1') `
         -SearchIdentityPrincipalId $deploy.searchIdentityPrincipalId.value `
-        -FoundryResourceId $deploy.foundryResourceId.value `
         -SiteUrls $SiteUrls `
         -EnvPath $envPath
 }
@@ -84,15 +84,17 @@ else {
     Write-Host "`n[2/4] -SkipAppRegistration set; ensure SHAREPOINT_CONNECTION_STRING is in .env." -ForegroundColor Yellow
 }
 
-# --- 3. Grant the operator the search data-plane roles (Phase 3: admin) ------
+# --- 3. Grant developer + search-MI roles (Phase 3: admin) ------------------
 if (-not $SkipIndex) {
-    Write-Host "`n[3/4] Granting the developer the search data-plane roles..." -ForegroundColor Green
-    & (Join-Path $repoRoot 'scripts/grant-developer-roles.ps1') `
+    Write-Host "`n[3/4] Granting developer + search managed-identity roles..." -ForegroundColor Green
+    & (Join-Path $repoRoot 'scripts/grant-dev-and-managed-identity.ps1') `
         -SearchServiceResourceId $deploy.searchServiceResourceId.value `
+        -SearchIdentityPrincipalId $deploy.searchIdentityPrincipalId.value `
+        -FoundryResourceId $deploy.foundryResourceId.value `
         -DeveloperPrincipalId (az ad signed-in-user show --query id -o tsv)
 }
 else {
-    Write-Host "`n[3/4] -SkipIndex set; skipping developer role grant." -ForegroundColor Yellow
+    Write-Host "`n[3/4] -SkipIndex set; skipping role grants." -ForegroundColor Yellow
 }
 
 # --- 4. Build index (Phase 4: developer) ------------------------------------

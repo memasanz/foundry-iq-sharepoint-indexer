@@ -1,7 +1,7 @@
 #Requires -Version 7.0
 <#
 .SYNOPSIS
-    Creates the SharePoint app registration + permissions and wires all RBAC needed by the
+    Creates the SharePoint app registration + permissions + per-site read grants needed by the
     multimodal, ACL-trimmed index, then prints (and optionally writes) the .env values.
 
     Steps:
@@ -14,19 +14,16 @@
       6. Create a federated credential trusting the search managed identity (enables the optional
          native SharePoint site-group path).
       7. Grant the app 'read' on each -SiteUrls site (required for Sites.Selected).
-      8. Grant the search managed identity "Cognitive Services User" on the Foundry resource
-         (Content Understanding + verbalization chat + Azure AI Vision + text embeddings).
 
-    This script does NOT grant the developer their search data-plane roles (Search Service
-    Contributor + Search Index Data Contributor) — that is handled by the orchestrator deploy.ps1,
-    or granted separately by an Owner/User Access Administrator (see README "How to deploy").
+    This script does NOT grant any Azure RBAC — the developer's search data-plane roles (Search
+    Service Contributor + Search Index Data Contributor) and the search managed identity's
+    "Cognitive Services User" role on the Foundry resource are handled by
+    scripts/grant-dev-and-managed-identity.ps1 (or the orchestrator deploy.ps1).
 
-    -SearchIdentityPrincipalId and -FoundryResourceId are read from the repo-root .env
-    (AZURE_SEARCH_IDENTITY_PRINCIPAL_ID / AZURE_FOUNDRY_RESOURCE_ID, written by deploy-infra.ps1)
-    when not passed explicitly. Pass them (or -EnvPath) to override.
+    -SearchIdentityPrincipalId is read from the repo-root .env (AZURE_SEARCH_IDENTITY_PRINCIPAL_ID,
+    written by deploy-infra.ps1) when not passed explicitly. Pass it (or -EnvPath) to override.
 
-    Run as an Entra admin (able to grant admin consent) who is also Owner / User Access
-    Administrator on the Foundry (Cognitive Services) resource.
+    Run as an Entra admin able to grant tenant-wide admin consent.
 
     Microsoft Learn:
       - SharePoint indexer:  https://learn.microsoft.com/azure/search/search-how-to-index-sharepoint-online
@@ -34,21 +31,19 @@
       - Content Understanding skill: https://learn.microsoft.com/azure/search/cognitive-search-skill-content-understanding
 
 .EXAMPLE
-    # IDs read from .env (written by deploy-infra.ps1); only -SiteUrls is required
+    # ID read from .env (written by deploy-infra.ps1); only -SiteUrls is required
     ./setup-app-registration.ps1 -SiteUrls "https://<tenant>.sharepoint.com/sites/<site>"
 
 .EXAMPLE
-    # Or pass the infra outputs explicitly
+    # Or pass the infra output explicitly
     ./setup-app-registration.ps1 `
         -SearchIdentityPrincipalId "<searchIdentityPrincipalId from bicep output>" `
-        -FoundryResourceId "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<foundry>" `
         -SiteUrls "https://<tenant>.sharepoint.com/sites/<site>" `
         -EnvPath ../.env
 #>
 [CmdletBinding()]
 param(
     [string] $SearchIdentityPrincipalId,
-    [Alias('OpenAIResourceId')] [string] $FoundryResourceId,
     [Parameter(Mandatory)] [string[]] $SiteUrls,
     [string] $AppDisplayName = 'spmm-sharepoint-acl',
     [string] $TenantId,
@@ -72,9 +67,7 @@ function Get-EnvValue {
 }
 
 if (-not $SearchIdentityPrincipalId) { $SearchIdentityPrincipalId = Get-EnvValue -Path $EnvPath -Key 'AZURE_SEARCH_IDENTITY_PRINCIPAL_ID' }
-if (-not $FoundryResourceId)         { $FoundryResourceId         = Get-EnvValue -Path $EnvPath -Key 'AZURE_FOUNDRY_RESOURCE_ID' }
 if (-not $SearchIdentityPrincipalId) { throw "SearchIdentityPrincipalId not provided and AZURE_SEARCH_IDENTITY_PRINCIPAL_ID not found in $EnvPath. Run scripts/deploy-infra.ps1 first, or pass -SearchIdentityPrincipalId." }
-if (-not $FoundryResourceId)         { throw "FoundryResourceId not provided and AZURE_FOUNDRY_RESOURCE_ID not found in $EnvPath. Run scripts/deploy-infra.ps1 first, or pass -FoundryResourceId." }
 
 $GraphAppId      = '00000003-0000-0000-c000-000000000000'  # Microsoft Graph
 $SharePointAppId = '00000003-0000-0ff1-ce00-000000000000'  # Office 365 SharePoint Online
@@ -96,14 +89,6 @@ function Resolve-AppRoleIds {
         $ids += $role.id
     }
     return $ids
-}
-
-function Grant-Rbac {
-    param([string] $RoleName, [string] $PrincipalId, [string] $Scope, [string] $PrincipalTypeArg = 'ServicePrincipal')
-    $existing = az role assignment list --assignee $PrincipalId --role $RoleName --scope $Scope --query "[0]" | ConvertFrom-Json
-    if ($existing) { Write-Host "'$RoleName' already assigned on:`n  $Scope" -ForegroundColor Yellow; return }
-    Write-Host "Assigning '$RoleName' to $PrincipalId on:`n  $Scope" -ForegroundColor Green
-    az role assignment create --assignee-object-id $PrincipalId --assignee-principal-type $PrincipalTypeArg --role $RoleName --scope $Scope 1>$null
 }
 
 function Grant-AppSiteAccess {
@@ -147,7 +132,7 @@ function Grant-AppSiteAccess {
 }
 
 Write-Host "==================================================================" -ForegroundColor Cyan
-Write-Host " SharePoint multimodal ACL search - app registration + RBAC" -ForegroundColor Cyan
+Write-Host " SharePoint multimodal ACL search - app registration + site grants" -ForegroundColor Cyan
 Write-Host " Tenant: $TenantId" -ForegroundColor Cyan
 Write-Host "==================================================================" -ForegroundColor Cyan
 
@@ -200,9 +185,6 @@ else {
 # --- 6. Per-site 'read' grants ----------------------------------------------
 foreach ($u in $SiteUrls) { Grant-AppSiteAccess -AppClientId $appId -AppName $AppDisplayName -Url $u -AppSecret $clientSecret -Tenant $TenantId }
 
-# --- 7. Search managed identity -> Foundry (Cognitive Services) -------------
-Grant-Rbac -RoleName 'Cognitive Services User' -PrincipalId $SearchIdentityPrincipalId -Scope $FoundryResourceId
-
 # --- Output -----------------------------------------------------------------
 $connString = "SharePointOnlineEndpoint=$($SiteUrls[0]);ApplicationId=$appId;ApplicationSecret=$clientSecret;TenantId=$TenantId"
 
@@ -219,4 +201,4 @@ if ($EnvPath) {
     Add-Content -Path $EnvPath -Value "SHAREPOINT_CONNECTION_STRING=$connString"
 }
 
-Write-Host "`nApp registration + RBAC complete. Store the client secret securely - it is shown only once." -ForegroundColor Green
+Write-Host "`nApp registration + site grants complete. Store the client secret securely - it is shown only once." -ForegroundColor Green
