@@ -16,11 +16,18 @@
 
     Use -SkipDeploy to (re)write .env from an already-existing deployment without redeploying.
 
+    Resource naming: -BaseName is the prefix (default 'spmm'). It flows into the Bicep, which names
+    the resources '{baseName}-search-{hash}', '{baseName}-foundry-{hash}', and '{baseName}-proj'
+    (the 6-char hash from uniqueString(resourceGroup().id) keeps the search/Foundry names globally
+    unique). Keep baseName lowercase letters/digits/dashes and short (search name <= 60 chars, no
+    leading/trailing dash). To override a full name instead of the prefix, set searchServiceName /
+    foundryName / projectName in infra/main.bicepparam.
+
     > Region: default `eastus` (a Vision-capable region). Do NOT use `eastus2` — the Vision
     > multimodal-embeddings skill is unavailable there and the skillset build fails.
 
 .EXAMPLE
-    ./scripts/deploy-infra.ps1 -ResourceGroup rg-spmm -Location eastus
+    ./scripts/deploy-infra.ps1 -ResourceGroup rg-spmm -Location eastus -BaseName spmm
 
 .OUTPUTS
     A hashtable of the deployment outputs (searchIdentityPrincipalId, foundryResourceId,

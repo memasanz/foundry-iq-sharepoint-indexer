@@ -113,8 +113,22 @@ project, and model deployments — then writes the non-secret settings to `.env`
 create the RG, Search, Foundry, and model deployments. No Entra or role-assignment rights needed.
 
 ```powershell
-./scripts/deploy-infra.ps1 -ResourceGroup rg-spmm -Location eastus
+./scripts/deploy-infra.ps1 -ResourceGroup rg-spmm -Location eastus -BaseName spmm
 ```
+
+**Naming your resources — `-BaseName` is the prefix** (default `spmm`). It flows into the Bicep,
+which builds the names as:
+
+| Resource | Name pattern | Example (`-BaseName mylib`) |
+|---|---|---|
+| Search service | `{baseName}-search-{6-char hash}` | `mylib-search-a1b2c3` |
+| Foundry (AI Services) | `{baseName}-foundry-{6-char hash}` | `mylib-foundry-a1b2c3` |
+| Foundry project | `{baseName}-proj` | `mylib-proj` |
+
+The 6-char hash (from `uniqueString(resourceGroup().id)`) keeps the globally-unique search and
+Foundry names unique. Keep `baseName` to lowercase letters/digits/dashes and short (the search-service
+name must be ≤ 60 chars total and can't start or end with a dash). To override a *full* name instead
+of just the prefix, set `searchServiceName` / `foundryName` / `projectName` in `infra/main.bicepparam`.
 
 **Step 2 — `scripts/setup-app-registration.ps1`** *(run by an admin)*
 Creates the SharePoint app registration, grants and **admin-consents** the Graph/SharePoint app-only
