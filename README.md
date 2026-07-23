@@ -94,16 +94,17 @@ services use a **system-assigned managed identity** and **Entra-only (keyless) d
 
 ## Deploy at a glance
 
-Now that you know *what* gets built, here's *how* — deployment is three scripts run **in order**.
-`deploy.ps1` runs all three back-to-back; you can also run them one at a time (e.g. to
+Now that you know *what* gets built, here's *how* — deployment is four scripts run **in order**.
+`deploy.ps1` runs all four back-to-back; you can also run them one at a time (e.g. to
 [split developer vs. admin duties](#option-b--split-developer-vs-admin)).
 
 ```
-                deploy.ps1  (orchestrator — runs the three in order)
-                     │
-  ┌──────────────────┼──────────────────────────────────┐
-  ▼                  ▼                                    ▼
-1. deploy-infra.ps1   2. setup-app-registration.ps1        3. build-index.ps1
+                   deploy.ps1  (orchestrator — runs the four in order)
+                        │
+  ┌─────────────────┬───┴────────────────┬────────────────────┐
+  ▼                 ▼                     ▼                     ▼
+1. deploy-infra.ps1  2. setup-app-        3. grant-developer-   4. build-index.ps1
+                        registration.ps1     roles.ps1
 ```
 
 **Step 1 — `scripts/deploy-infra.ps1`** *(run by a developer)*
@@ -116,47 +117,46 @@ create the RG, Search, Foundry, and model deployments. No Entra or role-assignme
 ./scripts/deploy-infra.ps1 -ResourceGroup rg-spmm -Location eastus -BaseName spmm
 ```
 
-**Naming your resources — `-BaseName` is the prefix** (default `spmm`). It flows into the Bicep,
-which builds the names as:
-
-| Resource | Name pattern | Example (`-BaseName mylib`) |
-|---|---|---|
-| Search service | `{baseName}-search-{6-char hash}` | `mylib-search-a1b2c3` |
-| Foundry (AI Services) | `{baseName}-foundry-{6-char hash}` | `mylib-foundry-a1b2c3` |
-| Foundry project | `{baseName}-proj` | `mylib-proj` |
-
-The 6-char hash (from `uniqueString(resourceGroup().id)`) keeps the globally-unique search and
-Foundry names unique. Keep `baseName` to lowercase letters/digits/dashes and short (the search-service
-name must be ≤ 60 chars total and can't start or end with a dash). To override a *full* name instead
-of just the prefix, set `searchServiceName` / `foundryName` / `projectName` in `infra/main.bicepparam`.
+`-BaseName` (default `spmm`) is the prefix for the resource names — e.g. `spmm-search-<hash>`,
+`spmm-foundry-<hash>`, `spmm-proj`. Keep it lowercase letters/digits/dashes and short (the
+search-service name must be ≤ 60 chars and can't start or end with a dash). See the script's help
+for overriding a full name instead of just the prefix.
 
 **Step 2 — `scripts/setup-app-registration.ps1`** *(run by an admin)*
 Creates the SharePoint app registration, grants and **admin-consents** the Graph/SharePoint app-only
 permissions, issues the client secret + federated credential, writes the per-site `read` grant, and
-assigns all Azure RBAC. Appends `SHAREPOINT_CONNECTION_STRING` to `.env`.
-**Requires all three:** **Owner** or **User Access Administrator** on the RG (to create the role
-assignments), **Application Administrator** / **Cloud Application Administrator** (to create the app
-registration), and **Privileged Role Administrator** or **Global Administrator** (to grant tenant-wide
-admin consent + the temporary `Sites.FullControl.All` bootstrap).
+grants the **search managed identity** *Cognitive Services User* on the Foundry. Appends
+`SHAREPOINT_CONNECTION_STRING` to `.env`.
+**Requires all three:** **Owner** or **User Access Administrator** on the Foundry (to create the
+role assignment), **Application Administrator** / **Cloud Application Administrator** (to create the
+app registration), and **Privileged Role Administrator** or **Global Administrator** (to grant
+tenant-wide admin consent + the temporary `Sites.FullControl.All` bootstrap).
 
 ```powershell
 ./scripts/setup-app-registration.ps1 -SearchIdentityPrincipalId <id> -FoundryResourceId <id> `
-    -SearchServiceResourceId <id> -DeveloperPrincipalId <id> `
     -SiteUrls "https://<tenant>.sharepoint.com/sites/<site>" -EnvPath ./.env
 ```
 
-**Step 3 — `scripts/build-index.ps1`** *(run by a developer)*
+**Step 3 — `scripts/grant-developer-roles.ps1`** *(run by an admin)*
+Grants the developer the two search data-plane roles they need in Step 4 — **Search Service
+Contributor** and **Search Index Data Contributor** — scoped to the search service. Defaults to the
+signed-in user if `-DeveloperPrincipalId` is omitted.
+**Requires:** **Owner** or **User Access Administrator** on the search service.
+
+```powershell
+./scripts/grant-developer-roles.ps1 -SearchServiceResourceId <id> -DeveloperPrincipalId <id>
+```
+
+**Step 4 — `scripts/build-index.ps1`** *(run by a developer)*
 Installs the Python deps and runs `build_index.py build` — creating the datasource, index, skillset,
 and indexer (the indexer runs automatically) — then polls until indexing completes.
-**Requires:** the two search data-plane roles Step 2 granted the developer — **Search Service
-Contributor** and **Search Index Data Contributor** on the search service. No ARM or Entra rights
-needed.
+**Requires:** the two search data-plane roles granted in Step 3. No ARM or Entra rights needed.
 
 ```powershell
 ./scripts/build-index.ps1
 ```
 
-**Or run all three at once** (when one operator holds every role):
+**Or run all four at once** (when one operator holds every role):
 
 ```powershell
 ./deploy.ps1 -ResourceGroup rg-spmm -Location eastus `
@@ -233,8 +233,9 @@ az rest --method get --url "https://graph.microsoft.com/v1.0/me/memberOf?$select
 
 ### 2. Permissions the deploy assigns
 
-`scripts/setup-app-registration.ps1` creates the app registration and assigns everything below.
-Nothing here needs to be assigned by hand.
+`scripts/setup-app-registration.ps1` creates the app registration and assigns the app-related grants
+(everything below except the developer's two Search roles, which
+`scripts/grant-developer-roles.ps1` assigns). Nothing here needs to be assigned by hand.
 
 **On the SharePoint app registration — all are `Application` (app-only) permissions; there are NO
 `Delegated` permissions.** The indexer runs headless (app-only client-credentials), so every
@@ -259,11 +260,11 @@ site (this is what `Sites.Selected` limits access to).
 
 **Azure RBAC role assignments:**
 
-| Assignee | Role | Scope | Why |
-|---|---|---|---|
-| Search service system-assigned MI | **Cognitive Services User** | Foundry (AI Services) account | Keyless calls to Content Understanding, verbalization chat, Azure AI Vision, text embeddings |
-| You (`-DeveloperPrincipalId`) | **Search Service Contributor** | Search service | Create datasource / index / skillset / indexer |
-| You (`-DeveloperPrincipalId`) | **Search Index Data Contributor** | Search service | Upload/query documents, run ACL-trimmed queries |
+| Assignee | Role | Scope | Assigned by | Why |
+|---|---|---|---|---|
+| Search service system-assigned MI | **Cognitive Services User** | Foundry (AI Services) account | `setup-app-registration.ps1` | Keyless calls to Content Understanding, verbalization chat, Azure AI Vision, text embeddings |
+| Developer (`-DeveloperPrincipalId`) | **Search Service Contributor** | Search service | `grant-developer-roles.ps1` | Create datasource / index / skillset / indexer |
+| Developer (`-DeveloperPrincipalId`) | **Search Index Data Contributor** | Search service | `grant-developer-roles.ps1` | Upload/query documents, run ACL-trimmed queries |
 
 <details>
 <summary><b>Client secret vs. federated credential — what each is for</b></summary>
@@ -377,14 +378,15 @@ Pick the option that matches who's running it and what already exists:
 | [C — existing Search + Foundry](#option-c--existing-search--foundry) | The search service and a Foundry account already exist; you only want the index. |
 | [D — without the Vision skill](#option-d--without-the-vision-skill-eg-eastus2) | You must deploy to a region without Vision multimodal embeddings (e.g. `eastus2`). |
 
-`deploy.ps1` is a thin orchestrator that runs three per-phase scripts in order — the same scripts
+`deploy.ps1` is a thin orchestrator that runs four per-phase scripts in order — the same scripts
 Option B runs individually:
 
 1. **`scripts/deploy-infra.ps1`** — Bicep (search + Foundry + models); writes non-secret `.env`.
 2. **`scripts/setup-app-registration.ps1`** — app registration, Graph/SharePoint permissions, admin
-   consent, client secret, federated credential, per-site `read` grant, and all RBAC; appends
-   `SHAREPOINT_CONNECTION_STRING` to `.env`.
-3. **`scripts/build-index.ps1`** — `pip install -r requirements.txt`, then `build_index.py build`
+   consent, client secret, federated credential, per-site `read` grant, and the search-MI RBAC;
+   appends `SHAREPOINT_CONNECTION_STRING` to `.env`.
+3. **`scripts/grant-developer-roles.ps1`** — grants the developer the two search data-plane roles.
+4. **`scripts/build-index.ps1`** — `pip install -r requirements.txt`, then `build_index.py build`
    (datasource, index, skillset, indexer — auto-runs) and polls status.
 
 ### Option A — one command (super admin)
@@ -401,13 +403,14 @@ Add `-SkipAppRegistration -SkipIndex` to stop after provisioning infra.
 
 ### Option B — split: developer vs. admin
 
-Keeps duties separate. Run the three per-phase scripts by hand, handing off between phases:
+Keeps duties separate. Run the four per-phase scripts by hand, handing off between phases:
 
 | Phase | Who | Rights needed | Script |
 |---|---|---|---|
 | **1. Infra** | Developer | Contributor on the RG | **`scripts/deploy-infra.ps1`** → Bicep (search + Foundry + models) + writes `.env`; prints MI principalId + resource IDs |
-| **2. Admin** | Admin | App/Privileged-Role admin **+** Owner/UAA | **`scripts/setup-app-registration.ps1`** → app registration, Graph/SharePoint perms, **admin consent**, client secret, federated cred, per-site `read` grant, **all RBAC** → appends `SHAREPOINT_CONNECTION_STRING` |
-| **3. Build** | Developer | The 2 Search roles the admin granted | **`scripts/build-index.ps1`** (`build_index.py build` / `status`) |
+| **2. App reg** | Admin | App/Privileged-Role admin **+** Owner/UAA on the Foundry | **`scripts/setup-app-registration.ps1`** → app registration, Graph/SharePoint perms, **admin consent**, client secret, federated cred, per-site `read` grant, search-MI RBAC → appends `SHAREPOINT_CONNECTION_STRING` |
+| **3. Dev roles** | Admin | Owner/UAA on the search service | **`scripts/grant-developer-roles.ps1`** → grants the developer *Search Service Contributor* + *Search Index Data Contributor* |
+| **4. Build** | Developer | The 2 Search roles granted in Phase 3 | **`scripts/build-index.ps1`** (`build_index.py build` / `status`) |
 
 **Phase 1 — Developer: provision infra only.**
 
@@ -423,22 +426,28 @@ az deployment group show -g rg-spmm -n main --query properties.outputs   # searc
 az ad signed-in-user show --query id -o tsv                              # your object id -> give to the admin
 ```
 
-**Phase 2 — Admin: app registration + all grants.**
+**Phase 2 — Admin: app registration + search-MI RBAC.**
 
 ```powershell
 ./scripts/setup-app-registration.ps1 `
     -SearchIdentityPrincipalId <searchIdentityPrincipalId> `
     -FoundryResourceId <foundryResourceId> `
-    -SearchServiceResourceId <searchServiceResourceId> `
     -SiteUrls "https://<tenant>.sharepoint.com/sites/<site>" `
-    -DeveloperPrincipalId <developer object id> `
     -EnvPath ./.env
 ```
 
 It prints (and, with `-EnvPath`, appends) `SHAREPOINT_CONNECTION_STRING`. Hand that back to the
 developer for their `.env` (the client secret is shown only once — share it securely).
 
-**Phase 3 — Developer: build the index.**
+**Phase 3 — Admin: grant the developer the search roles.**
+
+```powershell
+./scripts/grant-developer-roles.ps1 `
+    -SearchServiceResourceId <searchServiceResourceId> `
+    -DeveloperPrincipalId <developer object id>
+```
+
+**Phase 4 — Developer: build the index.**
 
 ```powershell
 ./scripts/build-index.ps1
@@ -447,7 +456,7 @@ developer for their `.env` (the client secret is shown only once — share it se
 This installs the Python deps and runs `build_index.py build` + `status`. It reads `.env` but never
 writes it, so it's safe to re-run.
 
-> ⚠️ For Phase 3 use `scripts/build-index.ps1` (or `python scripts/build_index.py build`) — do
+> ⚠️ For Phase 4 use `scripts/build-index.ps1` (or `python scripts/build_index.py build`) — do
 > **not** re-run `deploy.ps1`/`deploy-infra.ps1`, which rewrite `.env` from the infra outputs and
 > would overwrite the admin-supplied `SHAREPOINT_CONNECTION_STRING`.
 
@@ -539,10 +548,11 @@ infra/
   modules/search.bicep, modules/foundry.bicep
 scripts/
   deploy-infra.ps1             # Phase 1: Bicep infra + writes .env
-  setup-app-registration.ps1   # Phase 2: SharePoint app + permissions + RBAC
-  build-index.ps1              # Phase 3: pip install + build_index.py build/status
+  setup-app-registration.ps1   # Phase 2: SharePoint app + permissions + search-MI RBAC
+  grant-developer-roles.ps1    # Phase 3: grant developer the 2 Search data-plane roles
+  build-index.ps1              # Phase 4: pip install + build_index.py build/status
   build_index.py               # datasource / index / skillset / indexer + query
-deploy.ps1                     # orchestrator: runs the three phase scripts in order
+deploy.ps1                     # orchestrator: runs the four phase scripts in order
 notebooks/
   01_setup_index.ipynb           # build the 4 search resources via REST (.env-driven)
   demo_retrieval_and_images.ipynb

@@ -16,7 +16,10 @@
       7. Grant the app 'read' on each -SiteUrls site (required for Sites.Selected).
       8. Grant the search managed identity "Cognitive Services User" on the Foundry resource
          (Content Understanding + verbalization chat + Azure AI Vision + text embeddings).
-      9. (Optional) grant YOU the search data-plane roles so you can build + query the index.
+
+    This script does NOT grant the developer their search data-plane roles (Search Service
+    Contributor + Search Index Data Contributor) — that is handled by the orchestrator deploy.ps1,
+    or granted separately by an Owner/User Access Administrator (see README "How to deploy").
 
     Run as an Entra admin (able to grant admin consent) who is also Owner / User Access
     Administrator on the Foundry (Cognitive Services) resource.
@@ -31,8 +34,6 @@
         -SearchIdentityPrincipalId "<searchIdentityPrincipalId from bicep output>" `
         -FoundryResourceId "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<foundry>" `
         -SiteUrls "https://<tenant>.sharepoint.com/sites/<site>" `
-        -SearchServiceResourceId "<searchServiceResourceId from bicep output>" `
-        -DeveloperPrincipalId (az ad signed-in-user show --query id -o tsv) `
         -EnvPath ../.env
 #>
 [CmdletBinding()]
@@ -42,9 +43,6 @@ param(
     [Parameter(Mandatory)] [string[]] $SiteUrls,
     [string] $AppDisplayName = 'spmm-sharepoint-acl',
     [string] $TenantId,
-    [string] $DeveloperPrincipalId,
-    [string] $SearchServiceResourceId,
-    [ValidateSet('User', 'ServicePrincipal', 'Group')] [string] $DeveloperPrincipalType = 'User',
     # When set, appends the SharePoint connection values to this .env file.
     [string] $EnvPath
 )
@@ -177,15 +175,6 @@ foreach ($u in $SiteUrls) { Grant-AppSiteAccess -AppClientId $appId -AppName $Ap
 
 # --- 7. Search managed identity -> Foundry (Cognitive Services) -------------
 Grant-Rbac -RoleName 'Cognitive Services User' -PrincipalId $SearchIdentityPrincipalId -Scope $FoundryResourceId
-
-# --- 8. (Optional) grant the developer the search data-plane roles ----------
-if ($DeveloperPrincipalId -and $SearchServiceResourceId) {
-    Grant-Rbac -RoleName 'Search Service Contributor'    -PrincipalId $DeveloperPrincipalId -Scope $SearchServiceResourceId -PrincipalTypeArg $DeveloperPrincipalType
-    Grant-Rbac -RoleName 'Search Index Data Contributor' -PrincipalId $DeveloperPrincipalId -Scope $SearchServiceResourceId -PrincipalTypeArg $DeveloperPrincipalType
-}
-elseif ($DeveloperPrincipalId -or $SearchServiceResourceId) {
-    Write-Host "Skipping developer role grant: pass BOTH -DeveloperPrincipalId and -SearchServiceResourceId." -ForegroundColor Yellow
-}
 
 # --- Output -----------------------------------------------------------------
 $connString = "SharePointOnlineEndpoint=$($SiteUrls[0]);ApplicationId=$appId;ApplicationSecret=$clientSecret;TenantId=$TenantId"
