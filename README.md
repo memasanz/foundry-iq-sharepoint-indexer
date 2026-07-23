@@ -4,11 +4,6 @@ Turnkey deployment for a **multimodal, ACL-trimmed knowledge index** over a Shar
 library on **Azure AI Search**. It indexes text *and* images while preserving each document's
 **Entra ACLs**, so queries only return what the calling user is allowed to see.
 
-> **ACL-safe by design.** Image bytes are inlined as base64 `imageData` (no knowledge store) and
-> figures are verbalized by Content Understanding's built-in model — both are compatible with ACL
-> permission extraction, unlike the portal multimodal-RAG wizard's knowledge store + standalone
-> Chat Completion skill.
-
 ## Contents
 
 1. [What you're deploying](#what-youre-deploying) — the pipeline, index schema, ACL model, and Azure resources.
@@ -31,11 +26,6 @@ A custom-indexer pipeline (`*-nb7-*` objects) that combines three skills:
 | `ContentUnderstandingSkill` | Semantic chunking + page metadata + **image extraction** + **inline image verbalization** | `content`, `normalized_images` |
 | `AzureOpenAIEmbeddingSkill` | Text embedding | `contentVector` (3072-dim) |
 | `Vision.VectorizeSkill` | Azure AI Vision multimodal image embedding | `imageVector` (1024-dim) |
-
-Two index-projection selectors emit **`kind="text"`** rows (chunk `content` + `contentVector`,
-with figures verbalized inline as `![alt](figures/… "description")`) and **`kind="image"`** rows
-(base64 `imageData` + `imageVector`). Both carry the SharePoint document metadata and the
-`UserIds` / `GroupIds` ACL collections.
 
 ### Index schema
 
