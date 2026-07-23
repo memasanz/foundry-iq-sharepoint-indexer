@@ -106,18 +106,24 @@ Now that you know *what* gets built, here's *how* — deployment is three script
 1. deploy-infra.ps1   2. setup-app-registration.ps1        3. build-index.ps1
 ```
 
-**Step 1 — `scripts/deploy-infra.ps1`** *(developer; Contributor on the RG)*
+**Step 1 — `scripts/deploy-infra.ps1`** *(run by a developer)*
 Deploys the Bicep infrastructure — the Azure AI Search service and the Foundry (AI Services) account,
 project, and model deployments — then writes the non-secret settings to `.env`.
+**Requires:** **Contributor** (or Owner) on the target subscription / resource group — enough to
+create the RG, Search, Foundry, and model deployments. No Entra or role-assignment rights needed.
 
 ```powershell
 ./scripts/deploy-infra.ps1 -ResourceGroup rg-spmm -Location eastus
 ```
 
-**Step 2 — `scripts/setup-app-registration.ps1`** *(admin; app/consent + RBAC rights)*
+**Step 2 — `scripts/setup-app-registration.ps1`** *(run by an admin)*
 Creates the SharePoint app registration, grants and **admin-consents** the Graph/SharePoint app-only
 permissions, issues the client secret + federated credential, writes the per-site `read` grant, and
 assigns all Azure RBAC. Appends `SHAREPOINT_CONNECTION_STRING` to `.env`.
+**Requires all three:** **Owner** or **User Access Administrator** on the RG (to create the role
+assignments), **Application Administrator** / **Cloud Application Administrator** (to create the app
+registration), and **Privileged Role Administrator** or **Global Administrator** (to grant tenant-wide
+admin consent + the temporary `Sites.FullControl.All` bootstrap).
 
 ```powershell
 ./scripts/setup-app-registration.ps1 -SearchIdentityPrincipalId <id> -FoundryResourceId <id> `
@@ -125,9 +131,12 @@ assigns all Azure RBAC. Appends `SHAREPOINT_CONNECTION_STRING` to `.env`.
     -SiteUrls "https://<tenant>.sharepoint.com/sites/<site>" -EnvPath ./.env
 ```
 
-**Step 3 — `scripts/build-index.ps1`** *(developer; the 2 Search roles from step 2)*
+**Step 3 — `scripts/build-index.ps1`** *(run by a developer)*
 Installs the Python deps and runs `build_index.py build` — creating the datasource, index, skillset,
 and indexer (the indexer runs automatically) — then polls until indexing completes.
+**Requires:** the two search data-plane roles Step 2 granted the developer — **Search Service
+Contributor** and **Search Index Data Contributor** on the search service. No ARM or Entra rights
+needed.
 
 ```powershell
 ./scripts/build-index.ps1
