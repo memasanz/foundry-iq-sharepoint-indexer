@@ -7,11 +7,12 @@ library on **Azure AI Search**. It indexes text *and* images while preserving ea
 ## Contents
 
 1. [What you're deploying](#what-youre-deploying) — the pipeline, index schema, ACL model, and Azure resources.
-2. [Requirements & service limits](#requirements--service-limits) — tools, the region constraint, and known service limits.
-3. [Permissions](#permissions) — what the deployer needs, what the deploy assigns, and end-user query rights.
-4. [How to deploy](#how-to-deploy) — one command, split developer/admin, existing service, or without Vision.
-5. [Querying with ACL trimming](#querying-with-acl-trimming).
-6. [Repo layout](#repo-layout).
+2. [Deploy at a glance](#deploy-at-a-glance) — the three scripts, in the order you run them.
+3. [Requirements & service limits](#requirements--service-limits) — tools, the region constraint, and known service limits.
+4. [Permissions](#permissions) — what the deployer needs, what the deploy assigns, and end-user query rights.
+5. [How to deploy](#how-to-deploy) — one command, split developer/admin, existing service, or without Vision.
+6. [Querying with ACL trimming](#querying-with-acl-trimming).
+7. [Repo layout](#repo-layout).
 
 ---
 
@@ -88,6 +89,61 @@ services use a **system-assigned managed identity** and **Entra-only (keyless) d
 > Search *data-plane* objects created by `build_index.py` — none of these appear in the resource
 > group. The Foundry account also provides Content Understanding and Vision multimodal embeddings
 > with **no extra model deployment**.
+
+---
+
+## Deploy at a glance
+
+Now that you know *what* gets built, here's *how* — deployment is three scripts run **in order**.
+`deploy.ps1` runs all three back-to-back; you can also run them one at a time (e.g. to
+[split developer vs. admin duties](#option-b--split-developer-vs-admin)).
+
+```
+                deploy.ps1  (orchestrator — runs the three in order)
+                     │
+  ┌──────────────────┼──────────────────────────────────┐
+  ▼                  ▼                                    ▼
+1. deploy-infra.ps1   2. setup-app-registration.ps1        3. build-index.ps1
+```
+
+**Step 1 — `scripts/deploy-infra.ps1`** *(developer; Contributor on the RG)*
+Deploys the Bicep infrastructure — the Azure AI Search service and the Foundry (AI Services) account,
+project, and model deployments — then writes the non-secret settings to `.env`.
+
+```powershell
+./scripts/deploy-infra.ps1 -ResourceGroup rg-spmm -Location eastus
+```
+
+**Step 2 — `scripts/setup-app-registration.ps1`** *(admin; app/consent + RBAC rights)*
+Creates the SharePoint app registration, grants and **admin-consents** the Graph/SharePoint app-only
+permissions, issues the client secret + federated credential, writes the per-site `read` grant, and
+assigns all Azure RBAC. Appends `SHAREPOINT_CONNECTION_STRING` to `.env`.
+
+```powershell
+./scripts/setup-app-registration.ps1 -SearchIdentityPrincipalId <id> -FoundryResourceId <id> `
+    -SearchServiceResourceId <id> -DeveloperPrincipalId <id> `
+    -SiteUrls "https://<tenant>.sharepoint.com/sites/<site>" -EnvPath ./.env
+```
+
+**Step 3 — `scripts/build-index.ps1`** *(developer; the 2 Search roles from step 2)*
+Installs the Python deps and runs `build_index.py build` — creating the datasource, index, skillset,
+and indexer (the indexer runs automatically) — then polls until indexing completes.
+
+```powershell
+./scripts/build-index.ps1
+```
+
+**Or run all three at once** (when one operator holds every role):
+
+```powershell
+./deploy.ps1 -ResourceGroup rg-spmm -Location eastus `
+             -SiteUrls "https://<tenant>.sharepoint.com/sites/<site>"
+```
+
+Before running, check [Requirements & service limits](#requirements--service-limits) and
+[Permissions](#permissions) (what each step needs and assigns); see [How to deploy](#how-to-deploy)
+for the full options (super-admin one-command, developer/admin split, reusing an existing search
+service, or deploying without the Vision skill).
 
 ---
 
