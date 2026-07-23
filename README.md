@@ -29,11 +29,36 @@ A custom-indexer pipeline (`*-nb7-*` objects) that combines three skills:
 
 ### Index schema
 
-```
-id, parent_id, parent_id_img, kind, content, contentVector(3072), imageVector(1024),
-  imageData, page, pageTo, sourceFile, metadata_spo_item_id, webUrl,
-metadata_spo_item_path, lastModified, UserIds, GroupIds
-```
+An **Azure AI Search index** is the searchable store this pipeline populates — think of it as a
+table whose rows ("documents") are the chunked pieces of your SharePoint files and whose columns
+("fields") hold the searchable text, the vector embeddings, the source metadata, and the ACL lists.
+Each field is typed and independently configured for what you can do with it — full-text
+*searchable*, *filterable*, *sortable*, *facetable*, *retrievable* (returned in results), or a
+vector field used for similarity search. Queries run against this index, and Search trims the
+results to the caller using the two permission fields.
+
+One source file becomes **many** index rows: one `kind="text"` row per text chunk and one
+`kind="image"` row per extracted image, all linked back to the same document.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `Edm.String` (key) | Unique document key — the primary identifier for each row. |
+| `parent_id` | `Edm.String` | ID of the source document a **text** chunk was projected from (groups text rows by file). |
+| `parent_id_img` | `Edm.String` | ID of the source document an **image** row was projected from (groups image rows by file). |
+| `kind` | `Edm.String` | Row type: **`text`** (a text chunk) or **`image`** (an extracted image). Filterable/facetable. |
+| `content` | `Edm.String` | The chunk text (for `text` rows), with figures verbalized inline as `![alt](figures/… "description")`. Full-text searchable. |
+| `contentVector` | `Collection(Edm.Single)` (3072) | Text embedding of `content` (`text-embedding-3-large`) for semantic/vector search. Not retrievable. |
+| `imageVector` | `Collection(Edm.Single)` (1024) | Azure AI Vision multimodal embedding of an extracted image — enables text→image vector search. Not retrievable. |
+| `imageData` | `Edm.String` | Base64-encoded bytes of the extracted image (for `image` rows), so images render directly with no knowledge store. |
+| `page` | `Edm.Int32` | Starting page number of the chunk/image in the source file. |
+| `pageTo` | `Edm.Int32` | Ending page number of the chunk (a chunk may span pages). |
+| `sourceFile` | `Edm.String` | Source file name (also the semantic-ranker title field). |
+| `metadata_spo_item_id` | `Edm.String` | SharePoint item ID of the source document. |
+| `webUrl` | `Edm.String` | SharePoint URL of the source document (link back to the original). |
+| `metadata_spo_item_path` | `Edm.String` | SharePoint library path of the source document. |
+| `lastModified` | `Edm.DateTimeOffset` | Last-modified timestamp from SharePoint. Filterable/sortable. |
+| `UserIds` | `Collection(Edm.String)` | Entra **user** object IDs allowed to see the document — a `permissionFilter` field driving ACL trimming. Not retrievable. |
+| `GroupIds` | `Collection(Edm.String)` | Entra **group** object IDs allowed to see the document — a `permissionFilter` field driving ACL trimming. Not retrievable. |
 
 ### ACL trimming model
 
