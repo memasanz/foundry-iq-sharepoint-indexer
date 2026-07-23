@@ -78,7 +78,7 @@ services use a **system-assigned managed identity** and **Entra-only (keyless) d
 
 | Resource | Type / kind | SKU | Purpose |
 |---|---|---|---|
-| `spmm-search-<hash>` | `Microsoft.Search/searchServices` | `basic` (configurable), **semantic ranker = standard** | Hosts the datasource, index, skillset, and indexer; runs ACL-trimmed multimodal queries. Its MI calls Foundry keyless. |
+| `spmm-search-<hash>` | `Microsoft.Search/searchServices` | `basic` default (`-SearchSku`: basic / standard=S1 / standard2 / standard3), **semantic ranker = standard** | Hosts the datasource, index, skillset, and indexer; runs ACL-trimmed multimodal queries. Its MI calls Foundry keyless. |
 | `spmm-foundry-<hash>` | `Microsoft.CognitiveServices/accounts`, kind **`AIServices`** | `S0` | One account serving **Azure OpenAI** (embeddings + verbalization chat), **Content Understanding**, and **Azure AI Vision** multimodal embeddings. |
 | `spmm-proj` | `Microsoft.CognitiveServices/accounts/projects` | — | Foundry project under the account (`allowProjectManagement`). |
 | `text-embedding-3-large` | account model deployment | `Standard`, cap 50 | Text embeddings → `contentVector` (3072-dim). |
@@ -114,13 +114,17 @@ project, and model deployments — then writes the non-secret settings to `.env`
 create the RG, Search, Foundry, and model deployments. No Entra or role-assignment rights needed.
 
 ```powershell
-./scripts/deploy-infra.ps1 -ResourceGroup rg-spmm -Location eastus -BaseName spmm
+./scripts/deploy-infra.ps1 -ResourceGroup rg-spmm -Location eastus -BaseName spmm -SearchSku standard
 ```
 
 `-BaseName` (default `spmm`) is the prefix for the resource names — e.g. `spmm-search-<hash>`,
 `spmm-foundry-<hash>`, `spmm-proj`. Keep it lowercase letters/digits/dashes and short (the
 search-service name must be ≤ 60 chars and can't start or end with a dash). See the script's help
 for overriding a full name instead of just the prefix.
+
+`-SearchSku` (default `basic`) picks the Azure AI Search tier: `basic`, `standard` (**= S1**, used
+in the example above), `standard2` (S2), or `standard3` (S3). Use `standard`/S1 or higher for larger
+libraries — `basic` caps out at ~15 GB storage and lower vector-index quota. Omit it to get `basic`.
 
 **Step 2 — `scripts/setup-app-registration.ps1`** *(run by an admin)*
 Creates the SharePoint app registration, grants and **admin-consents** the Graph/SharePoint app-only

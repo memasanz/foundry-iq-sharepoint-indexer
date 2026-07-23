@@ -23,11 +23,15 @@
     leading/trailing dash). To override a full name instead of the prefix, set searchServiceName /
     foundryName / projectName in infra/main.bicepparam.
 
+    Search SKU: -SearchSku selects the Azure AI Search tier — 'basic' (default), 'standard' (= S1),
+    'standard2' (S2), or 'standard3' (S3). Use 'standard'/S1 or higher for larger libraries (more
+    storage + vector-index quota than basic).
+
     > Region: default `eastus` (a Vision-capable region). Do NOT use `eastus2` — the Vision
     > multimodal-embeddings skill is unavailable there and the skillset build fails.
 
 .EXAMPLE
-    ./scripts/deploy-infra.ps1 -ResourceGroup rg-spmm -Location eastus -BaseName spmm
+    ./scripts/deploy-infra.ps1 -ResourceGroup rg-spmm -Location eastus -BaseName spmm -SearchSku standard
 
 .OUTPUTS
     A hashtable of the deployment outputs (searchIdentityPrincipalId, foundryResourceId,
@@ -38,6 +42,7 @@ param(
     [Parameter(Mandatory)] [string] $ResourceGroup,
     [string] $Location = 'eastus',
     [string] $BaseName = 'spmm',
+    [ValidateSet('basic', 'standard', 'standard2', 'standard3')] [string] $SearchSku = 'basic',
     [string] $EnvPath,
     # Skip the Bicep deployment; just read the existing 'main' deployment outputs and (re)write .env.
     [switch] $SkipDeploy
@@ -48,11 +53,11 @@ $repoRoot = Split-Path $PSScriptRoot -Parent
 if (-not $EnvPath) { $EnvPath = Join-Path $repoRoot '.env' }
 
 if (-not $SkipDeploy) {
-    Write-Host "Creating resource group '$ResourceGroup' ($Location) + deploying Bicep..." -ForegroundColor Green
+    Write-Host "Creating resource group '$ResourceGroup' ($Location) + deploying Bicep (search SKU: $SearchSku)..." -ForegroundColor Green
     az group create -n $ResourceGroup -l $Location 1>$null
     az deployment group create -g $ResourceGroup -n main `
         -f (Join-Path $repoRoot 'infra/main.bicep') `
-        -p baseName=$BaseName location=$Location 1>$null
+        -p baseName=$BaseName location=$Location searchSku=$SearchSku 1>$null
 }
 else {
     Write-Host "-SkipDeploy set; reading existing 'main' deployment outputs..." -ForegroundColor Yellow

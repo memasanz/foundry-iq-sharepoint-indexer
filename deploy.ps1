@@ -39,6 +39,7 @@ param(
     [string] $Location = 'eastus',
     [Parameter(Mandatory)] [string[]] $SiteUrls,
     [string] $BaseName = 'spmm',
+    [ValidateSet('basic', 'standard', 'standard2', 'standard3')] [string] $SearchSku = 'basic',
     [switch] $SkipInfra,
     [switch] $SkipAppRegistration,
     [switch] $SkipIndex
@@ -56,13 +57,14 @@ Write-Host "==================================================================" 
 # --- 1. Infra (Phase 1: developer) — provision + write .env -----------------
 $infraArgs = @{ ResourceGroup = $ResourceGroup; EnvPath = $envPath }
 if ($SkipInfra) {
-    Write-Host "`n[1/3] -SkipInfra set; (re)writing .env from existing deployment outputs..." -ForegroundColor Yellow
+    Write-Host "`n[1/4] -SkipInfra set; (re)writing .env from existing deployment outputs..." -ForegroundColor Yellow
     $infraArgs.SkipDeploy = $true
 }
 else {
-    Write-Host "`n[1/3] Provisioning infrastructure (Bicep)..." -ForegroundColor Green
+    Write-Host "`n[1/4] Provisioning infrastructure (Bicep)..." -ForegroundColor Green
     $infraArgs.Location = $Location
     $infraArgs.BaseName = $BaseName
+    $infraArgs.SearchSku = $SearchSku
 }
 & (Join-Path $repoRoot 'scripts/deploy-infra.ps1') @infraArgs | Out-Null
 
