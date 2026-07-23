@@ -135,11 +135,14 @@ app registration), and **Privileged Role Administrator** or **Global Administrat
 tenant-wide admin consent + the temporary `Sites.FullControl.All` bootstrap). No Azure RBAC here.
 
 ```powershell
-./scripts/setup-app-registration.ps1 -SiteUrls "https://<tenant>.sharepoint.com/sites/<site>"
+./scripts/setup-app-registration.ps1 `
+    -SiteUrls "https://<tenant>.sharepoint.com/sites/<site>" `
+    -AppDisplayName spmm-sharepoint-acl
 ```
 
 The search-MI principal id is read from `.env` (written by Step 1); pass `-SearchIdentityPrincipalId`
-to override.
+to override. `-AppDisplayName` names the Entra app registration (default `spmm-sharepoint-acl`) — it
+is **independent** of the infra `-BaseName`, so set it explicitly if you want it to match your prefix.
 
 **Step 3 — `scripts/grant-dev-and-managed-identity.ps1`** *(run by an admin)*
 Grants the two search data-plane roles the developer needs in Step 4 — **Search Service
@@ -439,11 +442,13 @@ az ad signed-in-user show --query id -o tsv                              # your 
 ```powershell
 ./scripts/setup-app-registration.ps1 `
     -SearchIdentityPrincipalId <searchIdentityPrincipalId> `
-    -SiteUrls "https://<tenant>.sharepoint.com/sites/<site>"
+    -SiteUrls "https://<tenant>.sharepoint.com/sites/<site>" `
+    -AppDisplayName spmm-sharepoint-acl
 ```
 
 If the admin has the developer's `.env` (from Phase 1) on the same machine, they can omit the ID —
-the script reads `AZURE_SEARCH_IDENTITY_PRINCIPAL_ID` from it. The script appends
+the script reads `AZURE_SEARCH_IDENTITY_PRINCIPAL_ID` from it. `-AppDisplayName` names the Entra app
+registration (default `spmm-sharepoint-acl`, independent of the infra `-BaseName`). The script appends
 `SHAREPOINT_CONNECTION_STRING` to `.env`; hand that back to the developer (the client secret is
 shown only once — share it securely).
 
