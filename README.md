@@ -261,6 +261,18 @@ Plus, on the app: **admin consent** for the above, a **client secret** (1-year),
 credential** trusting the search managed identity, and a scoped **`read` grant** on each `-SiteUrls`
 site (this is what `Sites.Selected` limits access to).
 
+These permissions follow the *"ACL ingestion … when SharePoint site groups must be honored"* and
+*"Query-time resolution of SharePoint site groups"* rows of the official permission matrix —
+[Choose your permissions setup](https://learn.microsoft.com/en-us/azure/search/search-how-to-index-sharepoint-online#choose-your-permissions-setup).
+If you don't need native SharePoint site groups honored (Entra users/groups only), you can drop both
+Office 365 SharePoint Online permissions.
+
+**Verify after consent** (Enterprise App → Security → Permissions → Admin consent): you should see
+exactly **4 `Application`** permissions — Microsoft Graph `Sites.Selected` + `Files.Read.All`, and
+Office 365 SharePoint Online `Sites.Selected` + `User.Read.All`. **No `Sites.FullControl.All`** and
+**no `Delegated`** entries should remain (FullControl is added transiently to write the per-site
+`read` grant, then removed).
+
 > **Verified end-to-end** (dedicated test app `spmm-sharepoint-acl-test`): after the script runs,
 > the app's consented `appRoleAssignments` are exactly the four `Application` roles above with
 > **zero `oauth2PermissionGrants`** (no delegated), `Sites.FullControl.All` is gone, and the app
@@ -575,3 +587,12 @@ notebooks/
   01_setup_index.ipynb           # build the 4 search resources via REST (.env-driven)
   demo_retrieval_and_images.ipynb
 ```
+
+---
+
+## References
+
+- [SharePoint in Microsoft 365 indexer](https://learn.microsoft.com/en-us/azure/search/search-how-to-index-sharepoint-online) — set-up and behaviors.
+- [Choose your permissions setup](https://learn.microsoft.com/en-us/azure/search/search-how-to-index-sharepoint-online#choose-your-permissions-setup) — the permission matrix (which Graph/SharePoint permissions each ACL scenario needs).
+- [Use a SharePoint indexer to ingest permission metadata (ACLs)](https://learn.microsoft.com/en-us/azure/search/search-indexer-sharepoint-access-control-lists) — ACL ingestion + SharePoint group support.
+- [ACL and RBAC enforcement at query time](https://learn.microsoft.com/en-us/azure/search/search-query-access-control-rbac-enforcement) — how ACL trimming is applied.
