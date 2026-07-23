@@ -24,7 +24,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)] [string] $ResourceGroup,
-    [string] $Location = 'eastus2',
+    [string] $Location = 'eastus',
     [Parameter(Mandatory)] [string[]] $SiteUrls,
     [string] $BaseName = 'spmm',
     [switch] $SkipInfra,

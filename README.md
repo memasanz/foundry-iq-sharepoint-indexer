@@ -37,7 +37,8 @@ metadata_spo_item_path, lastModified, UserIds, GroupIds
 
 - Azure CLI (`az login`), PowerShell 7+, Python 3.9+.
 - A SharePoint Online site whose library you want to index.
-- Region with Azure AI Vision **multimodal embeddings** availability (e.g. `eastus2`).
+- Region with Azure AI Vision **multimodal embeddings** availability (e.g. `eastus`). **Not
+  `eastus2`** — the Vision multimodal-embeddings skill isn't available there.
 
 ## Permissions
 
@@ -236,15 +237,16 @@ globally unique. Both services use a **system-assigned managed identity** and **
 > group. The Foundry account also provides Content Understanding and Vision multimodal embeddings
 > with **no extra model deployment**.
 
-**Region:** default `eastus2`. Azure AI Vision multimodal-embedding availability varies by region —
-pick a region that supports it (see prerequisites). Change SKUs/region/models via `-BaseName`,
-`-Location`, `infra/main.bicepparam`, or the `deployments` param in `infra/main.bicep`.
+**Region:** `deploy.ps1` and `main.bicepparam` default to `eastus` (a Vision-capable region). Do
+**not** use `eastus2` — the Vision multimodal-embeddings skill is not available there. Availability
+varies by region (see prerequisites). Change SKUs/region/models via `-BaseName`, `-Location`,
+`infra/main.bicepparam`, or the `deployments` param in `infra/main.bicep`.
 
 **Deploy just the infrastructure** (no app registration / index):
 
 ```powershell
-az group create -n rg-spmm -l eastus2
-az deployment group create -g rg-spmm -f infra/main.bicep -p infra/main.bicepparam
+az group create -n rg-spmm -l eastus
+az deployment group create -g rg-spmm -f infra/main.bicep -p infra/main.bicepparam -p location=eastus
 # resource IDs + endpoints needed by the setup script:
 az deployment group show -g rg-spmm -n main --query properties.outputs
 ```
@@ -259,11 +261,12 @@ end-to-end flow is below.
              -SiteUrls "https://<tenant>.sharepoint.com/sites/<site>"
 ```
 
-> **⚠️ Region matters — use a Vision-capable region (e.g. `eastus`).** The skillset includes the
-> Azure AI Vision multimodal-embeddings skill (`Microsoft.Skills.Vision.VectorizeSkill`), which is
-> **not available in `eastus2`** — a build there fails at skillset creation with
-> *"…which is not supported in this region."* Pass `-Location eastus` (the `deploy.ps1` default is
-> `eastus2`, so set it explicitly). Verify multimodal-embedding availability for your region in the
+> **⚠️ Region matters — use a Vision-capable region (e.g. `eastus`, the default).** The skillset
+> includes the Azure AI Vision multimodal-embeddings skill (`Microsoft.Skills.Vision.VectorizeSkill`),
+> which is **not available in `eastus2`** — a build there fails at skillset creation with
+> *"…which is not supported in this region."* `deploy.ps1` defaults to `eastus`; override with
+> `-Location` only for another Vision-capable region. Verify multimodal-embedding availability for
+> your region in the
 > [skill reference](https://learn.microsoft.com/azure/search/cognitive-search-skill-vision-vectorize#supported-regions).
 > If you must deploy to `eastus2`, drop the Vision skill (see *Deploy without the Vision skill* below).
 
