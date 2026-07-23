@@ -137,18 +137,20 @@ app registration), and **Privileged Role Administrator** or **Global Administrat
 tenant-wide admin consent + the temporary `Sites.FullControl.All` bootstrap).
 
 ```powershell
-./scripts/setup-app-registration.ps1 -SearchIdentityPrincipalId <id> -FoundryResourceId <id> `
-    -SiteUrls "https://<tenant>.sharepoint.com/sites/<site>" -EnvPath ./.env
+./scripts/setup-app-registration.ps1 -SiteUrls "https://<tenant>.sharepoint.com/sites/<site>"
 ```
+
+The search-MI principal id and Foundry resource id are read from `.env` (written by Step 1); pass
+`-SearchIdentityPrincipalId` / `-FoundryResourceId` to override.
 
 **Step 3 — `scripts/grant-developer-roles.ps1`** *(run by an admin)*
 Grants the developer the two search data-plane roles they need in Step 4 — **Search Service
-Contributor** and **Search Index Data Contributor** — scoped to the search service. Defaults to the
-signed-in user if `-DeveloperPrincipalId` is omitted.
+Contributor** and **Search Index Data Contributor** — scoped to the search service. Reads the search
+resource id from `.env`; defaults to the signed-in user if `-DeveloperPrincipalId` is omitted.
 **Requires:** **Owner** or **User Access Administrator** on the search service.
 
 ```powershell
-./scripts/grant-developer-roles.ps1 -SearchServiceResourceId <id> -DeveloperPrincipalId <id>
+./scripts/grant-developer-roles.ps1 -DeveloperPrincipalId <developer object id>
 ```
 
 **Step 4 — `scripts/build-index.ps1`** *(run by a developer)*
@@ -422,8 +424,10 @@ Keeps duties separate. Run the four per-phase scripts by hand, handing off betwe
 ./scripts/deploy-infra.ps1 -ResourceGroup rg-spmm -Location eastus
 ```
 
-No Entra work, no RBAC, no index build. It prints the values the admin needs for Phase 2; you can
-also read them, plus your own principal id, with:
+No Entra work, no RBAC, no index build. It writes the resource IDs the admin needs for Phases 2–3
+to `.env` (`AZURE_SEARCH_IDENTITY_PRINCIPAL_ID`, `AZURE_FOUNDRY_RESOURCE_ID`,
+`AZURE_SEARCH_SERVICE_RESOURCE_ID`) and prints them. You can also re-read them, plus your own
+principal id, with:
 
 ```powershell
 az deployment group show -g rg-spmm -n main --query properties.outputs   # searchIdentityPrincipalId, foundryResourceId, searchServiceResourceId
@@ -436,12 +440,13 @@ az ad signed-in-user show --query id -o tsv                              # your 
 ./scripts/setup-app-registration.ps1 `
     -SearchIdentityPrincipalId <searchIdentityPrincipalId> `
     -FoundryResourceId <foundryResourceId> `
-    -SiteUrls "https://<tenant>.sharepoint.com/sites/<site>" `
-    -EnvPath ./.env
+    -SiteUrls "https://<tenant>.sharepoint.com/sites/<site>"
 ```
 
-It prints (and, with `-EnvPath`, appends) `SHAREPOINT_CONNECTION_STRING`. Hand that back to the
-developer for their `.env` (the client secret is shown only once — share it securely).
+If the admin has the developer's `.env` (from Phase 1) on the same machine, they can omit the two
+IDs — the script reads `AZURE_SEARCH_IDENTITY_PRINCIPAL_ID` / `AZURE_FOUNDRY_RESOURCE_ID` from it.
+The script appends `SHAREPOINT_CONNECTION_STRING` to `.env`; hand that back to the developer (the
+client secret is shown only once — share it securely).
 
 **Phase 3 — Admin: grant the developer the search roles.**
 
@@ -450,6 +455,8 @@ developer for their `.env` (the client secret is shown only once — share it se
     -SearchServiceResourceId <searchServiceResourceId> `
     -DeveloperPrincipalId <developer object id>
 ```
+
+`-SearchServiceResourceId` is also read from `.env` (`AZURE_SEARCH_SERVICE_RESOURCE_ID`) when omitted.
 
 **Phase 4 — Developer: build the index.**
 

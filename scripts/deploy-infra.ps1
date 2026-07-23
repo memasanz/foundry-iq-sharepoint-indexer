@@ -91,16 +91,21 @@ AZURE_AI_SERVICES_ENDPOINT=$foundryEndpoint
 AZURE_AI_VISION_MODEL_VERSION=2023-04-15
 
 SHAREPOINT_CONTAINER_NAME=defaultSiteLibrary
+
+# --- Infra outputs for Phase 2/3 (app registration + role grants). Not secrets. ---
+AZURE_SEARCH_IDENTITY_PRINCIPAL_ID=$searchPrincipalId
+AZURE_FOUNDRY_RESOURCE_ID=$foundryResourceId
+AZURE_SEARCH_SERVICE_RESOURCE_ID=$searchResourceId
 "@
 Set-Content -Path $EnvPath -Value $envContent -Encoding utf8
 Write-Host "  wrote $EnvPath" -ForegroundColor Gray
 
-Write-Host "`n============ Hand these to the admin for Phase 2 ============" -ForegroundColor Cyan
+Write-Host "`n============ Hand these to the admin for Phase 2/3 (also saved in .env) ============" -ForegroundColor Cyan
 Write-Host "  -SearchIdentityPrincipalId $searchPrincipalId"
 Write-Host "  -FoundryResourceId         $foundryResourceId"
 Write-Host "  -SearchServiceResourceId   $searchResourceId"
 Write-Host "  (developer object id: run 'az ad signed-in-user show --query id -o tsv')"
-Write-Host "============================================================" -ForegroundColor Cyan
+Write-Host "====================================================================================" -ForegroundColor Cyan
 
 # Emit the outputs so an orchestrator (deploy.ps1) can consume them.
 [pscustomobject]@{

@@ -18,8 +18,8 @@
     Defaults to the signed-in user if -DeveloperPrincipalId is omitted.
 
 .EXAMPLE
-    # Grant the signed-in developer (most common)
-    ./scripts/grant-developer-roles.ps1 -SearchServiceResourceId "<searchServiceResourceId from bicep output>"
+    # SearchServiceResourceId read from .env (written by deploy-infra.ps1); grants the signed-in user
+    ./scripts/grant-developer-roles.ps1
 
 .EXAMPLE
     # Admin grants a named developer in the split developer/admin model
@@ -29,12 +29,28 @@
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)] [string] $SearchServiceResourceId,
+    [string] $SearchServiceResourceId,
     [string] $DeveloperPrincipalId,
-    [ValidateSet('User', 'ServicePrincipal', 'Group')] [string] $DeveloperPrincipalType = 'User'
+    [ValidateSet('User', 'ServicePrincipal', 'Group')] [string] $DeveloperPrincipalType = 'User',
+    # .env file to read AZURE_SEARCH_SERVICE_RESOURCE_ID from (written by deploy-infra.ps1).
+    [string] $EnvPath
 )
 
 $ErrorActionPreference = 'Stop'
+
+$repoRoot = Split-Path $PSScriptRoot -Parent
+if (-not $EnvPath) { $EnvPath = Join-Path $repoRoot '.env' }
+
+function Get-EnvValue {
+    param([string] $Path, [string] $Key)
+    if (-not (Test-Path $Path)) { return $null }
+    $line = Select-String -Path $Path -Pattern "^\s*$Key\s*=" | Select-Object -First 1
+    if (-not $line) { return $null }
+    return ($line.Line -replace "^\s*$Key\s*=\s*", '').Trim()
+}
+
+if (-not $SearchServiceResourceId) { $SearchServiceResourceId = Get-EnvValue -Path $EnvPath -Key 'AZURE_SEARCH_SERVICE_RESOURCE_ID' }
+if (-not $SearchServiceResourceId) { throw "SearchServiceResourceId not provided and AZURE_SEARCH_SERVICE_RESOURCE_ID not found in $EnvPath. Run scripts/deploy-infra.ps1 first, or pass -SearchServiceResourceId." }
 
 if (-not $DeveloperPrincipalId) {
     $DeveloperPrincipalId = az ad signed-in-user show --query id -o tsv

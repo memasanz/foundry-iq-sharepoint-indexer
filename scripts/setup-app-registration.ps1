@@ -21,6 +21,10 @@
     Contributor + Search Index Data Contributor) — that is handled by the orchestrator deploy.ps1,
     or granted separately by an Owner/User Access Administrator (see README "How to deploy").
 
+    -SearchIdentityPrincipalId and -FoundryResourceId are read from the repo-root .env
+    (AZURE_SEARCH_IDENTITY_PRINCIPAL_ID / AZURE_FOUNDRY_RESOURCE_ID, written by deploy-infra.ps1)
+    when not passed explicitly. Pass them (or -EnvPath) to override.
+
     Run as an Entra admin (able to grant admin consent) who is also Owner / User Access
     Administrator on the Foundry (Cognitive Services) resource.
 
@@ -30,6 +34,11 @@
       - Content Understanding skill: https://learn.microsoft.com/azure/search/cognitive-search-skill-content-understanding
 
 .EXAMPLE
+    # IDs read from .env (written by deploy-infra.ps1); only -SiteUrls is required
+    ./setup-app-registration.ps1 -SiteUrls "https://<tenant>.sharepoint.com/sites/<site>"
+
+.EXAMPLE
+    # Or pass the infra outputs explicitly
     ./setup-app-registration.ps1 `
         -SearchIdentityPrincipalId "<searchIdentityPrincipalId from bicep output>" `
         -FoundryResourceId "/subscriptions/<sub>/resourceGroups/<rg>/providers/Microsoft.CognitiveServices/accounts/<foundry>" `
@@ -38,16 +47,34 @@
 #>
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory)] [string] $SearchIdentityPrincipalId,
-    [Parameter(Mandatory)] [Alias('OpenAIResourceId')] [string] $FoundryResourceId,
+    [string] $SearchIdentityPrincipalId,
+    [Alias('OpenAIResourceId')] [string] $FoundryResourceId,
     [Parameter(Mandatory)] [string[]] $SiteUrls,
     [string] $AppDisplayName = 'spmm-sharepoint-acl',
     [string] $TenantId,
-    # When set, appends the SharePoint connection values to this .env file.
+    # .env file to read the infra outputs from and append the SharePoint connection values to.
+    # Defaults to the repo-root .env (written by scripts/deploy-infra.ps1).
     [string] $EnvPath
 )
 
 $ErrorActionPreference = 'Stop'
+
+# --- Resolve infra outputs from .env when not passed explicitly --------------
+$repoRoot = Split-Path $PSScriptRoot -Parent
+if (-not $EnvPath) { $EnvPath = Join-Path $repoRoot '.env' }
+
+function Get-EnvValue {
+    param([string] $Path, [string] $Key)
+    if (-not (Test-Path $Path)) { return $null }
+    $line = Select-String -Path $Path -Pattern "^\s*$Key\s*=" | Select-Object -First 1
+    if (-not $line) { return $null }
+    return ($line.Line -replace "^\s*$Key\s*=\s*", '').Trim()
+}
+
+if (-not $SearchIdentityPrincipalId) { $SearchIdentityPrincipalId = Get-EnvValue -Path $EnvPath -Key 'AZURE_SEARCH_IDENTITY_PRINCIPAL_ID' }
+if (-not $FoundryResourceId)         { $FoundryResourceId         = Get-EnvValue -Path $EnvPath -Key 'AZURE_FOUNDRY_RESOURCE_ID' }
+if (-not $SearchIdentityPrincipalId) { throw "SearchIdentityPrincipalId not provided and AZURE_SEARCH_IDENTITY_PRINCIPAL_ID not found in $EnvPath. Run scripts/deploy-infra.ps1 first, or pass -SearchIdentityPrincipalId." }
+if (-not $FoundryResourceId)         { throw "FoundryResourceId not provided and AZURE_FOUNDRY_RESOURCE_ID not found in $EnvPath. Run scripts/deploy-infra.ps1 first, or pass -FoundryResourceId." }
 
 $GraphAppId      = '00000003-0000-0000-c000-000000000000'  # Microsoft Graph
 $SharePointAppId = '00000003-0000-0ff1-ce00-000000000000'  # Office 365 SharePoint Online
